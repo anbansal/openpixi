@@ -1,3 +1,4 @@
+
 /*Since the whole calculation is a little bit tricky for one to understand just from looking at the code,
  * I shall do the calculation on a different place soon and make sure that there is a link here.
  * Practically I am first doing a coordinate change, where the x - axis is the collision line of the 2 particles,
@@ -6,7 +7,7 @@
  */
 
 package org.openpixi.pixi.physics.collision;
-
+import mpi.*;
 import org.openpixi.pixi.physics.*;
 import org.openpixi.pixi.physics.collision.Algorithms.CollisionAlgorithm;
 import org.openpixi.pixi.physics.collision.detectors.Detector;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 
 
 public class ElasticCollision extends Collision{
+	
 	
 	public ElasticCollision(Detector det, CollisionAlgorithm alg) {
 		super(det, alg);
@@ -154,7 +156,7 @@ public class ElasticCollision extends Collision{
 		p2.x -= minDistanceX * p1.mass / (p1.mass + p2.mass);
 		p2.y -= minDistanceY * p1.mass / (p1.mass + p2.mass);
 		
-		double m21 = p2.mass / p1.mass;
+	    double m21 = p2.mass / p1.mass;
 	    double x21 = p2.x - p1.x;
 	    double y21 = p2.y - p1.y;
 	    double vx21 = p2.vx - p1.vx;
@@ -174,11 +176,31 @@ public class ElasticCollision extends Collision{
 
 	public void check(ArrayList<Particle2D> parlist, Force f, Solver s, double step)
 	{
-		for(int i = 0; i < (parlist.size() - 1); i++)
+	        int myrank = MPI.COMM_WORLD.Rank() ;
+	        int numprocs = MPI.COMM_WORLD.Size();
+	        int nummolecules = parlist.size();
+	        int molecules  = (int) nummolecules/numprocs;
+	        int mymolecules;
+	        if (myrank == 0) { 
+	        	mymolecules = molecules+ nummolecules-(mymolecules*numproc);
+	        }
+	        else {
+	        	mymolecules = molecules;
+	        }
+	        int jlo = myrank*mymolecules+1;
+	        int jhi = myrank*mymolecules+mymolecules;
+	        if (myrank == numprocs -1 ) jhi -= 1;
+	        int temp,klo,khi;
+	        temp = numprocs-myrank-1;
+	        
+		for(int i = jlo-1; i < jhi; i++)
 		{
 			Particle2D p1 = (Particle2D) parlist.get(i);
 			//double x1 = Math.sqrt(p1.x * p1.x + p1.y * p1.y);
-			for(int k = (i + 1); k < parlist.size(); k++)
+			// firtst check for this process
+			klo = i+1;
+			khi = jhi;
+			for(int k = klo; k < khi; k++)
 			{
 				Particle2D p2 = (Particle2D) parlist.get(k);
 				double distance = Math.sqrt((p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y));
@@ -190,8 +212,32 @@ public class ElasticCollision extends Collision{
 					s.prepare(p2, f, step);
 				}
 			}
+			// now check for molecules of it's right neigghborhood processes
 			
+			if ( temp != 0) 
+			{
+				for(int jj = 1;jj <= temp; jj++) 
+				{
+					klo = jhi+1;
+					khi = jhi+jj*molecules;
+					for(int k = klo-1; k < khi; k++) 
+					{
+						Particle2D p2 = (Particle2D) parlist.get(k);
+						double distance = Math.sqrt((p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y));	
+						if(distance <= (p1.radius + p2.radius)) {
+							s.complete(p1, f, step);
+							s.complete(p2, f, step);
+							doCollision(p1, p2);
+							s.prepare(p1, f, step);
+							s.prepare(p2, f, step);
+						}
+					}
+				}	
+			
+			}
 		}
+		
+		
 	}
 
 }
