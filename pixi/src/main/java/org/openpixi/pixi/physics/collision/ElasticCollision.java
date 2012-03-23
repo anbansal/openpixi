@@ -1,4 +1,3 @@
-
 /*Since the whole calculation is a little bit tricky for one to understand just from looking at the code,
  * I shall do the calculation on a different place soon and make sure that there is a link here.
  * Practically I am first doing a coordinate change, where the x - axis is the collision line of the 2 particles,
@@ -7,7 +6,7 @@
  */
 
 package org.openpixi.pixi.physics.collision;
-import mpi.*;
+
 import org.openpixi.pixi.physics.*;
 import org.openpixi.pixi.physics.collision.Algorithms.CollisionAlgorithm;
 import org.openpixi.pixi.physics.collision.detectors.Detector;
@@ -15,10 +14,9 @@ import org.openpixi.pixi.physics.force.Force;
 import org.openpixi.pixi.physics.solver.*;
 import java.lang.Math;
 import java.util.ArrayList;
-
+import java.lang.Thread;
 
 public class ElasticCollision extends Collision{
-	
 	
 	public ElasticCollision(Detector det, CollisionAlgorithm alg) {
 		super(det, alg);
@@ -173,34 +171,64 @@ public class ElasticCollision extends Collision{
 	/*for this method I need to integrate a few more things to avoid for example particles getting stuck together,
 	 * and solve couple of more problems, be patient!
 	 */
-
-	public void check(ArrayList<Particle2D> parlist, Force f, Solver s, double step)
+/* For making the check function parallel, I am going to use Java Thread implementaion. For that we first create
+ threadcheck class which implements the Runnable interface. In that class I have made a Run function, where first number
+  of molecules are calculated for the particular thread and then that thread check that whether it's molecule is collide
+   with another molecules or not, if so further action are taken up. */
+/* In the check method first create Runnable object and Thread array of size of total number of threads. Then run a for
+ loop and for each loop index create a thread, start it and finally join them.*/
+ public void check(int nthreads,ArrayList<Particle2D> parlist, Force f, Solver s, double step)
 	{
-	        int myrank = MPI.COMM_WORLD.Rank() ;
-	        int numprocs = MPI.COMM_WORLD.Size();
-	        int nummolecules = parlist.size();
-	        int molecules  = (int) nummolecules/numprocs;
-	        int mymolecules;
-	        if (myrank == 0) { 
-	        	mymolecules = molecules+ nummolecules-(mymolecules*numproc);
-	        }
-	        else {
-	        	mymolecules = molecules;
-	        }
-	        int jlo = myrank*mymolecules+1;
-	        int jhi = myrank*mymolecules+mymolecules;
-	        if (myrank == numprocs -1 ) jhi -= 1;
-	        int temp,klo,khi;
-	        temp = numprocs-myrank-1;
-	        
-		for(int i = jlo-1; i < jhi; i++)
+		Runnable runners[] = new Runnable[nthreads];
+		Thread th[] = new Thread[nthreads];
+
+		for(int j=0;j<nthreads;j++){
+			runners[j] = new threadcheck(j,nthreads,ArrayList<Particle2D> parlist, Force f, Solver s, double step);
+			th[j] = new Thread(runners[j]);
+			th[j].start();
+		}
+		// wait for threads to finish
+		for(int j=0;j<nthreads;j++){
+			try{
+				th[j].join();
+			}
+			catch(InterruptedException e){}
+		}
+
+	}
+
+}
+// create a Runnable interface implemented class
+class threadcheck implements Runnable {
+	ArrayList<Particle2D> parlist = new ArrayList<Particle2D>();
+	Force f = new Force();
+	Solver s = new Solver();
+	double step;
+	int id,nthreads;
+	
+	public threadcheck(int id,int nthreads,ArrayList<Particle2D> parlist, Force f, Solver s, double step)
+	{
+		this.id = id;
+		this.nthreads = nthreads;		
+		this.parlist = parlist;
+		this.f = f;
+		this.s = s;
+		this.step = step;
+	}
+	/* make a Run() function which actaully calculates the number of molecules for this particular thread
+	and then check that whether it's molecule is collide with another molecules or not, if so further action are taken up. */
+	public void run()
+	{
+		int jlo,jhi,slice;
+		slice = parlist.size()/nthreads;
+		jlo = id * slice + 1;
+		jhi = jlo+slice;
+		if (jhi > parlist.size()) jhi = parlist.size();
+		for(int i = jlo; i < jhi; i++)
 		{
 			Particle2D p1 = (Particle2D) parlist.get(i);
 			//double x1 = Math.sqrt(p1.x * p1.x + p1.y * p1.y);
-			// firtst check for this process
-			klo = i+1;
-			khi = jhi;
-			for(int k = klo; k < khi; k++)
+			for(int k = (i + 1); k < parlist.size(); k++)
 			{
 				Particle2D p2 = (Particle2D) parlist.get(k);
 				double distance = Math.sqrt((p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y));
@@ -212,32 +240,7 @@ public class ElasticCollision extends Collision{
 					s.prepare(p2, f, step);
 				}
 			}
-			// now check for molecules of it's right neigghborhood processes
 			
-			if ( temp != 0) 
-			{
-				for(int jj = 1;jj <= temp; jj++) 
-				{
-					klo = jhi+1;
-					khi = jhi+jj*molecules;
-					for(int k = klo-1; k < khi; k++) 
-					{
-						Particle2D p2 = (Particle2D) parlist.get(k);
-						double distance = Math.sqrt((p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y));	
-						if(distance <= (p1.radius + p2.radius)) {
-							s.complete(p1, f, step);
-							s.complete(p2, f, step);
-							doCollision(p1, p2);
-							s.prepare(p1, f, step);
-							s.prepare(p2, f, step);
-						}
-					}
-				}	
-			
-			}
 		}
-		
-		
 	}
-
 }
